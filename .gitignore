@@ -1,5 +1,6 @@
 models/
 .venv/
 .git/
+data/
 __pycache__/
 *.pyc
