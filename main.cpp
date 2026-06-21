@@ -3,6 +3,7 @@
  * vì nó chạy quá nhanh :))"-18/6/2026-
  * "pls check line 210"-19/6/2026-
  * "dcm s t ko đặt tên cho cái dictionary là pos ;-;" -20/6/2026-
+ * "i hate goto"-21/6/2026-
  */
 #include "include/json.h"
 #include "include/llama.h"
@@ -19,8 +20,8 @@ using namespace std;
 #define OUTPUT "./output/pred.csv"
 
 struct data_s{
-  char*data;
-  char***dictionary;
+  const char*data;
+  const char***dictionary;
   int total_question,total_char;
 };
 struct token_s{
@@ -33,11 +34,11 @@ struct model_s{
   struct llama_context*ctx;
   struct llama_sampler*smpl;
 };
-void cleanUpData(char**data,char****dictionary,int*total_question,int*total_char){
+void cleanUpData(const char**data,const char****dictionary,int*total_question,int*total_char){
   if(data&&*data){free(*data);*data=0;}
   if(dictionary&&*dictionary){
-    for(int a=0;a<(*total_question);a++)free(*dictionary[a]);
-    free(*dictionary); *dictionary=0
+    for(int a=0;a<(*total_question);a++)free((*dictionary)[a]);
+    free(*dictionary); *dictionary=0;
   }
   if(total_question)*total_question=0;
   if(total_char)*total_char=0;
@@ -48,11 +49,10 @@ void cleanUpToken(llama_token**data,llama_token***dictionary,int*size_token,int*
   if(size_token)*size_token=0;
   if(size_number)*size_number=0;
 }
-void cleanUpModel(struct llama_model**model,struct llama_context**ctx){
+void cleanUpModel(struct llama_model**model,struct llama_context**ctx,struct llama_sampler**smpl){
   if(model&&*model){llama_free_model(*model);*model=0;}
   if(ctx&&*ctx){llama_free(*ctx);*ctx=0;}
   if(smpl&&*smpl){llama_sampler_free(*smpl);*smpl=0;}
-  llama_backend_free();
 }
 
 char*readFile(const char*path,size_t*size_out){
@@ -195,7 +195,7 @@ struct token_s tokenizeRange(llama_model*model,const char*prompt_pos[],int len[]
   llama_token**dictionary=(llama_token**)malloc((r-l+1)*sizeof(token));
   if(!token||!dictionary){
     printf("[error] allocation failed while initializing space for tokenizing");
-    cleanUpPrompt(&token,&dictionary,0,0);
+    cleanUpToken(&token,&dictionary,0,0);
     return {};
   }
   llama_token*write_ptr=token;
@@ -205,7 +205,7 @@ struct token_s tokenizeRange(llama_model*model,const char*prompt_pos[],int len[]
     int cur_size=llama_tokenize(model,prompt_pos[i],len[i],write_ptr,max_token-used_size,false,true);
     if(cur_size<0){
       printf("[error] failed to tokenize");
-      cleanUpPrompt(&data,&dictionary,0,0);
+      cleanUpToken(&token,&dictionary,0,0);
       return{};
     }
     dictionary[i-l]=write_ptr;
@@ -215,20 +215,21 @@ struct token_s tokenizeRange(llama_model*model,const char*prompt_pos[],int len[]
   total_size=write_ptr-token;
   return {token,dictionary,r-l+1,total_size};
 }
-void appendToBatch(struct llama_batch*batch,llama_token*t,int*pos,int size,int sseg_id,int eseg_id){
+void appendToBatch(struct llama_batch*batch,llama_token*t,int*pos,int size,int sseq_id,int eseq_id){
   int off=batch->n_tokens;
-  int bsize=eseg_id-sseg_id+1;
+  int bsize=eseq_id-sseq_id+1;
   memcpy(batch->token+off,t,size*sizeof(*t));
   for(int i=0;i<size;i++){
     int c=off+i;
     batch->pos[c]=(*pos)++;
     batch->n_seq_id[c]=bsize;
-    for(int j=sseg_id;j<=eseg_id;j++)batch->seg_id[c][j]=sseg_id+j;
+    for(int j=0;j<bsize;j++)batch->seq_id[c][j]=sseq_id+j;
     batch->logits[c]=false;
   }
+  if(size>0)batch->logits[off+size]=true;
   batch->n_tokens+=size;
 }
-token_s initStaticPromptToken(struct model_s*model){
+token_s initSharedPromptToken(struct model_s*model){
   const char*prompt[7]={
     "<|im_start|>system\nBạn là một trợ lý ảo vô cùng chính xác, chuyên xử lý bài thi trắc nghiệm. Nhiệm vụ của bạn là đọc câu hỏi và các lựa chọn được cung cấp, sau đó phân tích để tìm ra đáp án đúng nhất.\nYÊU CẦU BẮT BUỘC: Chỉ được phép trả về duy nhất một chữ cái đại diện cho đáp án đúng (A, B, C, hoặc D). Không giải thích, không thêm khoảng trắng, không lặp lại câu hỏi.<|im_end|>\n",
     "<|im_start|>user\n",
@@ -239,11 +240,12 @@ token_s initStaticPromptToken(struct model_s*model){
     "\nĐáp án đúng là:<|im_end|>\n<|im_start|>assistant\n"
   };
   int strsize[7]={0};
+  int total_size=0; 
   for(int i=0;i<7;i++){
     strsize[i]=strlen(prompt[i]);
     total_size+=strsize[i];
   }
-  return tokenizeRange(model->model,prompt,strsize,7,0,6);
+  return tokenizeRange(model->model,prompt,total_size,7,0,6);
 };
 void processRangeQuestion(struct data_s*data,struct model_s*model,struct token_s*shared_token,int sqidx,int eqidx,FILE*out){
   if(sqidx>eqidx)return;
@@ -270,7 +272,7 @@ void processRangeQuestion(struct data_s*data,struct model_s*model,struct token_s
     //creating shared prompt
     batch->n_token=0;
     int pos=0;
-    appendToBatch(batch,shared_pos[0],shared_size,&pos,sqidx,eqidx);
+    appendToBatch(batch,shared_pos[0],&pos,shared_size,sqidx,eqidx);
     for(int bidx=0;bidx<total_question;bidx++){
       int qidx=bidx+sqidx;
       const char* prompt_pos[6] = {
@@ -282,14 +284,15 @@ void processRangeQuestion(struct data_s*data,struct model_s*model,struct token_s
       struct token_s tk=tokenizeRange(model->model,prompt_pos,strsize,5,0,4);
       llama_token*tk_pos[6]={
         tk.dictionary[0],tk.dictionary[1],tk.dictionary[2],tk.dictionary[3], 
-        tk.dictionary[4],tk.dictionary[0]+tk.total_number;
+        tk.dictionary[4],tk.dictionary[0]+tk.total_number
       }
       for(int i=0;i<5;i++){
         int j=i+1;
         appendToBatch(batch,shared_pos[j],&pos,shared_pos[j+1]-shared_pos[j],bidx,bidx);
-        appendToBatch(batch,tk_pos[j],&pos,tk_pos[j]-tk_pos[i],bidx,bidx);
+        appendToBatch(batch,tk_pos[i],&pos,tk_pos[j]-tk_pos[i],bidx,bidx);
       }
       appendToBatch(batch,shared_pos[6],&pos,shared_pos[7]-shared_pos[6],bidx,bidx);
+      cleanUpToken(&tk.data,&tk.dictionary,&tk.total_token,&tk.total_number);
     }
     // decode
     if(!llama_decode(model->ctx,batch)){
@@ -303,8 +306,8 @@ void processRangeQuestion(struct data_s*data,struct model_s*model,struct token_s
           if (out_buf[i]>='A'&&out_buf[i]<='D'){ans=out_buf[i];break;}
           if (out_buf[i]>='a'&&out_buf[i]<='d'){ans=out_buf[i]&~32;break;}
         }
-        int qid_size=data->dictionary[current_qidx][1]-data->dictionary[current_qidx][0];
-        fprintf(out,"%.*s,%c\n",qid_size,data->dictionary[current_qidx][0],ans);
+        int qid_size=data->dictionary[qidx][1]-data->dictionary[qidx][0];
+        fprintf(out,"%.*s,%c\n",qid_size,data->dictionary[qidx][0],ans);
       }
       fflush(out);
     }else{
@@ -317,10 +320,11 @@ void processRangeQuestion(struct data_s*data,struct model_s*model,struct token_s
     }
   }else{
     int mid=sqidx+(total_question-1)/2;
-    printf("[log] devided into two branch: from %d to %d and %d to %d",sqidx,mid,mid+1,sqidx);
-    processRangeQuestion(data,model,shared_token,sqidx,mid);
-    processRangeQuestion(data,model,shared_token,mid+1,eqidx);
+    printf("[log] devided into two branch: from %d to %d and %d to %d",sqidx,mid,mid+1,eqidx);
+    processRangeQuestion(data,model,shared_token,sqidx,mid,out);
+    processRangeQuestion(data,model,shared_token,mid+1,eqidx,out);
   }
+  llama_batch_free(batch);
 }
 
 struct model_s initializeModel(char*model_path){
@@ -343,7 +347,7 @@ struct model_s initializeModel(char*model_path){
   if(!model){
     printf("[error] failed loading model");
     cleanUpModel(&model,&ctx,&smpl);
-    goto end;
+    return {};
   }
   printf("[log] completed loading model\n");
   printf("[log] loading context for model\n");
@@ -351,7 +355,7 @@ struct model_s initializeModel(char*model_path){
   if(!ctx){
     printf("[log] failed loading conext for model\n");
     cleanUpModel(&model,&ctx,&smpl);
-    goto end;
+    return {};
   }
   printf("[log] completed loading context for model\n");
   printf("[log] loading sampler");
@@ -361,7 +365,6 @@ struct model_s initializeModel(char*model_path){
   llama_sampler_chain_add(smpl, llama_sampler_init_top_p(0.95f, 1));
   llama_sampler_chain_add(smpl, llama_sampler_init_min_p(0.05f, 1));
   llama_sampler_chain_add(smpl, llama_sampler_init_dist(LLAMA_DEFAULT_SEED));
-end:
   return (struct model_s){model,ctx,smpl};
 }
 
@@ -376,11 +379,13 @@ int main(){
   int publ_size=0,priv_size=0,raw_size=0,*rsize=0;
   if(stat(PUBLIC,&tmp)==0){
     publ=readFile(PUBLIC,&publ_size);
-    raw_size++;
+    if(publ)raw_size++;
+    else printf("[error] failed to read %s",PUBLIC);
   }
   if(stat(PRIVATE,&tmp)==0){
     priv=readFile(PRIVATE,&priv_size);
-    raw_size++;
+    if(priv)raw_size++;
+    else printf("[error] failed to read %s",PRIVATE);
   }
   if(!publ&&!priv){
     printf("[very very extreme fatal error] there is no input file ;-;");
@@ -388,7 +393,7 @@ int main(){
     if(priv)free(priv);
     goto end;
   }
-  raw=(char**)malloc(raw_size*sizeof(unsigned long long*));//black magic
+  raw=(char**)malloc(raw_size*sizeof(int*));//black magic
   rsize=(int*)alloca(raw_size*sizeof(int));
   int t=0;
   if(!raw||!rsize){
@@ -412,30 +417,24 @@ int main(){
   if(data.total_question>0){
     FILE*out=fopen(OUTPUT,"w");
     if(!out){
-      printf("[fatal error] failed opening output file: %s\n",OUTPUT);
+      printf("[fatal error] failed creating output file: %s\n",OUTPUT);
       goto end;
     }
-    printf("[log] all of my preparation is for this moment");
-    prinf("[log] starting inference proccess loop")
+    printf("[log] starting processing answer");
     fprintf(out,"qid,answer\n");
-    for(int i=0;i<data.total_question;i++){
-      struct prompt_s prompt=generatePrompt(&data,i);
-      char ans=runBatchInference(&pipeline,&prompt,i+1);
-      int qid_size=data.dictionary[i][1]-data.dictionary[i][0];//pls be smaller than 4mb ;-;
-      fprintf(out,"%.*s,%c\n",qid_size,data.dictionary[i][0],ans);
-      fflush(out);
-      cleanUpPrompt(&prompt.buffer, &prompt.size);
-    }
+    struct token_s shared_token=initSharedPromptToken(pipeline);
+    processRangeQuestion(&data,&pipeline,&shared_token,0,data.total_question-1,out);
     auto end_time=chrono::high_resolution_clock::now();
     double total_seconds=chrono::duration<double>(end_time-start_time).count();
     printf("[log] completed processed %d questions in %.2f seconds (Avg: %.3fs per question).\n",data.total_question,total_seconds,total_seconds/data.total_question);
     fclose(out);
   }
 end:
-  cleanUpData(&data.data,&data.dictionary &data.total_question,&data.total_char);
+  cleanUpData(&data.data,&data.dictionary,&data.total_question,&data.total_char);
   cleanUpModel(&pipeline.model,&pipeline.ctx);
   if(raw)free(raw);
   if(publ)free(publ);
   if(priv)free(priv);
+  llama_backend_free();
   return 0;
 }

@@ -3,5 +3,6 @@ models/
 .git/
 .temp/
 data/
+output/
 __pycache__/
 *.pyc
