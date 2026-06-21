@@ -16,7 +16,7 @@ using namespace std;
 #define MODEL "./models/Qwen3.5-4B-Q4_K_M.gguf"
 #define EMBEDDING "./models/Qwen3-Embedding-4B-Q4_K_M.gguf"
 #define PUBLIC "./data/public-data.json"
-#define PRIVATE"./data/private-data.json"
+#define PRIVATE "./data/private-data.json"
 #define OUTPUT "./output/pred.csv"
 
 struct data_s{
@@ -431,7 +431,7 @@ int main(){
   }
 end:
   cleanUpData(&data.data,&data.dictionary,&data.total_question,&data.total_char);
-  cleanUpModel(&pipeline.model,&pipeline.ctx);
+  cleanUpModel(&pipeline.model,&pipeline.ctx,&pipeline.smpl);
   if(raw)free(raw);
   if(publ)free(publ);
   if(priv)free(priv);
