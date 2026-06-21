@@ -17,11 +17,44 @@ using namespace std;
 #define PUBLIC "./data/public-data.json"
 #define PRIVATE"./data/private-data.json"
 #define OUTPUT "./output/pred.csv"
+
 struct data_s{
   char*data;
   char***dictionary;
   int total_question,total_char;
 };
+struct token_s{
+  llama_token*data;
+  llama_token**dictionary;
+  int total_token,total_number;
+};
+struct model_s{
+  struct llama_model*model;
+  struct llama_context*ctx;
+  struct llama_sampler*smpl;
+};
+void cleanUpData(char**data,char****dictionary,int*total_question,int*total_char){
+  if(data&&*data){free(*data);*data=0;}
+  if(dictionary&&*dictionary){
+    for(int a=0;a<(*total_question);a++)free(*dictionary[a]);
+    free(*dictionary); *dictionary=0
+  }
+  if(total_question)*total_question=0;
+  if(total_char)*total_char=0;
+}
+void cleanUpToken(llama_token**data,llama_token***dictionary,int*size_token,int*size_number){
+  if(data&&*data){free(*data);*data=0;}
+  if(dictionary&&*dictionary){free(*dictionary);*dictionary=0;}
+  if(size_token)*size_token=0;
+  if(size_number)*size_number=0;
+}
+void cleanUpModel(struct llama_model**model,struct llama_context**ctx){
+  if(model&&*model){llama_free_model(*model);*model=0;}
+  if(ctx&&*ctx){llama_free(*ctx);*ctx=0;}
+  if(smpl&&*smpl){llama_sampler_free(*smpl);*smpl=0;}
+  llama_backend_free();
+}
+
 char*readFile(const char*path,size_t*size_out){
   FILE*input=fopen(path,"rb");
   if(!input)return 0;
@@ -45,14 +78,6 @@ end:
   fclose(input);
   *size_out=i_size;
   return buffer;
-}
-void cleanUpData(char**data,char****dictionary,int*total_question,int*total_char){
-  if(*data)free(*data);
-  if(*dictionary){
-    for(int a=0;a<(*total_question);a++)free(*dictionary[a]);
-    free(*dictionary);
-  }
-  *data=0;*dictionary=0;*total_question=0;*total_char=0;
 }
 // pass the pointer to the data's string
 // pls dont pass more than two file into this
@@ -142,8 +167,7 @@ struct data_s parsingDataJson(char*raw[],int raw_size[],int size){
             printf("[error] unexpected type at object number %d\n",obj_num);
             cleanUpData(&data,&dictionary,&total_object,&out_size);
             goto end;
-
-        .+}
+        }
         object_node=object_node->next;
       }
       array_node=array_node->next;
@@ -156,15 +180,53 @@ end:
   for(int j=0;j<size;j++) free(raw_root[j]);
   return (struct data_s){data,dictionary,total_object,out_size};
 }
-struct token_s{
-  llama_token*data;
-  llama_token**dictionary;
-  int total_token,total_number;
-};
-void cleanUpToken(llama_token**data,llama_token***dictionary,int*size_token,int*size_number){
-  if(*data)free(*data);
-  if(*dictionary)free(*dictionary);
-  *data=0;*dictionary=0;*size_token=0;*size_number=0;
+
+// i am bored with using goto
+// pls input a valid one : [l,r]<n;
+struct token_s tokenizeRange(llama_model*model,const char*prompt_pos[],int len[],int size,int l,int r){
+  if(l>r||r>=size){
+    printf("[log] invalid input for tokenizeRange function");
+    return {};
+  }
+  int total_size=0;
+  for(int i=l;i<=r;i++)total_size+=len[i];
+  int max_token=total_size+(16*(r-l+1));
+  llama_token*token=(llama_token*)malloc(max_token*sizeof(llama_token));
+  llama_token**dictionary=(llama_token**)malloc((r-l+1)*sizeof(token));
+  if(!token||!dictionary){
+    printf("[error] allocation failed while initializing space for tokenizing");
+    cleanUpPrompt(&token,&dictionary,0,0);
+    return {};
+  }
+  llama_token*write_ptr=token;
+  for(int i=0;i<(r-l+1);i++)dictionary[i]=0;
+  int used_size=0;
+  for(int i=l;i<=r;i++){
+    int cur_size=llama_tokenize(model,prompt_pos[i],len[i],write_ptr,max_token-used_size,false,true);
+    if(cur_size<0){
+      printf("[error] failed to tokenize");
+      cleanUpPrompt(&data,&dictionary,0,0);
+      return{};
+    }
+    dictionary[i-l]=write_ptr;
+    write_ptr+=cur_size;
+    used_size+=cur_size;
+  }
+  total_size=write_ptr-token;
+  return {token,dictionary,r-l+1,total_size};
+}
+void appendToBatch(struct llama_batch*batch,llama_token*t,int*pos,int size,int sseg_id,int eseg_id){
+  int off=batch->n_tokens;
+  int bsize=eseg_id-sseg_id+1;
+  memcpy(batch->token+off,t,size*sizeof(*t));
+  for(int i=0;i<size;i++){
+    int c=off+i;
+    batch->pos[c]=(*pos)++;
+    batch->n_seq_id[c]=bsize;
+    for(int j=sseg_id;j<=eseg_id;j++)batch->seg_id[c][j]=sseg_id+j;
+    batch->logits[c]=false;
+  }
+  batch->n_tokens+=size;
 }
 token_s initStaticPromptToken(struct model_s*model){
   const char*prompt[7]={
@@ -177,32 +239,11 @@ token_s initStaticPromptToken(struct model_s*model){
     "\nĐáp án đúng là:<|im_end|>\n<|im_start|>assistant\n"
   };
   int strsize[7]={0};
-  int token_size=7;
-  int total_size=0;
   for(int i=0;i<7;i++){
     strsize[i]=strlen(prompt[i]);
     total_size+=strsize[i];
   }
-  int max_token=total_size+64;
-  llama_token*token=(llama_token*)malloc(max_token*sizeof(llama_token));
-  llama_token**dictionary=(llama_token**)malloc(7*sizeof(*int));
-  if(!token||!dictionary){
-    printf("[error] allocation failed while initializing static prompts");
-    cleanUpPrompt(&token,&dictionary,&token_size,&total_size);
-    goto end;
-  }
-  llama_token*write_ptr=token;
-  for(int i=0;i<7;i++)dictionary[i]=0;
-  int used_size=0;
-  for(int i=0;i<7;i++){
-    int cur_size=llama_tokenize(model->model,prompt[i],strsize[i],write_ptr,max_token-used_size,false,true);
-    dictionary[i]=write_ptr;
-    write_ptr+=cur_size;
-    used_size+=cur_size;
-  }
-  total_size=write_ptr-token;
-end:
-  return {token,dictionary,token_size,total_size};
+  return tokenizeRange(model->model,prompt,strsize,7,0,6);
 };
 void processRangeQuestion(struct data_s*data,struct model_s*model,struct token_s*shared_token,int sqidx,int eqidx,FILE*out){
   if(sqidx>eqidx)return;
@@ -213,7 +254,7 @@ void processRangeQuestion(struct data_s*data,struct model_s*model,struct token_s
   int total_question=eqidx-sqidx+1;
   int shared_size=shared_pos[1]-shared_pos[0];
   int segment_size=((eqidx+1==data->total_question)?data->dictionary[sqidx][0]+data->total_char:data->dictionary[eqidx+1][0])-data->dictionary[sqidx][0];//??
-  int max_token=segment_size+total_question*(shared_pos[8]-shared_pos[1])+shared_size+(1<<10);//black magic
+  int max_token=segment_size+total_question*(shared_pos[7]-shared_pos[1])+shared_size+(1<<10);//black magic
   int max_batch=llama_n_batch(model->ctx);
   if(sqidx==eqidx&&max_token>max_batch){
     int qid_size = data->dictionary[sqidx][1]-data->dictionary[sqidx][0];
@@ -228,26 +269,51 @@ void processRangeQuestion(struct data_s*data,struct model_s*model,struct token_s
     struct llama_batch batch=llama_batch_init(max_token,0,total_question);
     //creating shared prompt
     batch->n_token=0;
-    int off=batch->n_token;
-    memcpy(batch->token,shared_pos[0],shared_size*sizeof(llama_token));
-    for(int i=0;i<tmp_size;i++){
-      int c=i+off;
-      batch->pos[c]=i;
-      batch->n_seq_id[c]=shared_size;
-      for(int j=0;j<shared_size;j++)batch->seq_id[c][j]=j;
-      batch->logits[c]=false;
-    }
-    batch->n_tokens += shared_size;
-    for(int bidx=0;bidx<shared_size;i++){
-      int qidx=sqidx+bidx;
-      const char*prompt_pos[6]={
-        data->dictionary[qidx][1], data->dictionary[qidx][2], data->dictionary[qidx][3], data->dictionary[qidx][4],
-        data->dictionary[qidx][5], (qidx+1==data->total_question)?(data->dictionary[0][0]+data->total_char):data->dictionary[qidx+1][0]
+    int pos=0;
+    appendToBatch(batch,shared_pos[0],shared_size,&pos,sqidx,eqidx);
+    for(int bidx=0;bidx<total_question;bidx++){
+      int qidx=bidx+sqidx;
+      const char* prompt_pos[6] = {
+        data->dictionary[qidx][1],data->dictionary[qidx][2],data->dictionary[qidx][3],data->dictionary[qidx][4], 
+        data->dictionary[qidx][5],(qidx+1==data->total_question)?(data->data+data->total_char):data->dictionary[qidx+1][0]
       };
-      int prompt_size=prompt_pos[5]-prompt_pos[0];
-      int token_size=prompt_size+(1<<4);
-      struct token_s token={0};
-      token->data=(llama_token*)malloc()
+      int strsize[5]={0};
+      for(int i=0;i<5;i++)strsize[i]=prompt_pos[i+1]-prompt_pos[i];
+      struct token_s tk=tokenizeRange(model->model,prompt_pos,strsize,5,0,4);
+      llama_token*tk_pos[6]={
+        tk.dictionary[0],tk.dictionary[1],tk.dictionary[2],tk.dictionary[3], 
+        tk.dictionary[4],tk.dictionary[0]+tk.total_number;
+      }
+      for(int i=0;i<5;i++){
+        int j=i+1;
+        appendToBatch(batch,shared_pos[j],&pos,shared_pos[j+1]-shared_pos[j],bidx,bidx);
+        appendToBatch(batch,tk_pos[j],&pos,tk_pos[j]-tk_pos[i],bidx,bidx);
+      }
+      appendToBatch(batch,shared_pos[6],&pos,shared_pos[7]-shared_pos[6],bidx,bidx);
+    }
+    // decode
+    if(!llama_decode(model->ctx,batch)){
+      for(int bidx=0;bidx<total_question;bidx++){
+        int qidx=sqidx+bidx;
+        llama_token prediction=llama_sampler_sample(model->smpl,model->ctx,bidx);
+        char out_buf[64];
+        int res_len=llama_token_to_piece(model->model,prediction,out_buf,sizeof(out_buf),0,false);
+        char ans='C';
+        for (int i = 0; i < res_len; i++) {
+          if (out_buf[i]>='A'&&out_buf[i]<='D'){ans=out_buf[i];break;}
+          if (out_buf[i]>='a'&&out_buf[i]<='d'){ans=out_buf[i]&~32;break;}
+        }
+        int qid_size=data->dictionary[current_qidx][1]-data->dictionary[current_qidx][0];
+        fprintf(out,"%.*s,%c\n",qid_size,data->dictionary[current_qidx][0],ans);
+      }
+      fflush(out);
+    }else{
+      printf("[error] decode execution failed for range %d to %d. defaulting to 'C'\n", sqidx, eqidx);
+      for(int i=sqidx;i<=eqidx;i++) {
+        int qid_size=data->dictionary[i][1]-data->dictionary[i][0];
+        fprintf(out,"%.*s,C\n",qid_size,data->dictionary[i][0]);
+      }
+      fflush(out);
     }
   }else{
     int mid=sqidx+(total_question-1)/2;
@@ -257,19 +323,10 @@ void processRangeQuestion(struct data_s*data,struct model_s*model,struct token_s
   }
 }
 
-struct model_s{
-  struct llama_model*model;
-  struct llama_context*ctx;
-};
-void cleanUpModel(struct llama_model**model,struct llama_context**ctx){
-  if(*model)llama_free_model(*model);
-  if(*ctx)llama_free(*ctx);
-  *model=0;*ctx=0;
-  llama_backend_free();
-}
 struct model_s initializeModel(char*model_path){
   struct llama_context*ctx=0;
   struct llama_model*model=0;
+  struct llama_sampler*smpl=0;
   printf("[log] initializing llama backend\n");
   llama_backend_init();
   printf("[log] completed initializing llama backend\n");
@@ -285,7 +342,7 @@ struct model_s initializeModel(char*model_path){
   model=llama_load_model_from_file(model_path, model_params);
   if(!model){
     printf("[error] failed loading model");
-    cleanUpModel(&model,&ctx);
+    cleanUpModel(&model,&ctx,&smpl);
     goto end;
   }
   printf("[log] completed loading model\n");
@@ -293,12 +350,19 @@ struct model_s initializeModel(char*model_path){
   ctx=llama_new_context_with_model(model,context_params);
   if(!ctx){
     printf("[log] failed loading conext for model\n");
-    cleanUpModel(&model,&ctx);
+    cleanUpModel(&model,&ctx,&smpl);
     goto end;
   }
   printf("[log] completed loading context for model\n");
+  printf("[log] loading sampler");
+  smpl=llama_sampler_init_chain();
+  llama_sampler_chain_add(smpl, llama_sampler_init_temp(0.0f));
+  llama_sampler_chain_add(smpl, llama_sampler_init_top_k(40));
+  llama_sampler_chain_add(smpl, llama_sampler_init_top_p(0.95f, 1));
+  llama_sampler_chain_add(smpl, llama_sampler_init_min_p(0.05f, 1));
+  llama_sampler_chain_add(smpl, llama_sampler_init_dist(LLAMA_DEFAULT_SEED));
 end:
-  return (struct model_s){model,ctx};
+  return (struct model_s){model,ctx,smpl};
 }
 
 #include <sys/stat.h>
