@@ -1,21 +1,40 @@
 /*
  * -- random comment --
+ * "im going to be autistic" -17/6/2026
  * "lý do tại s e ko có log cho parsing hay là read file
  * vì nó chạy quá nhanh :))"-18/6/2026-
  * "pls check line 210"-19/6/2026-
  * "dcm s t ko đặt tên cho cái dictionary là pos ;-;" -20/6/2026-
  * "i hate goto"-21/6/2026-
+ * -- road map --
+ *  parses->tokenize->batch->decode->model (super simple)
+ *  4d dành cho parse: debug 3d->tổng 1 tuần
+ *  3d dành cho model: debug 3d->
  * -- note--
  *  code này được viết 100% bởi e (i use arch btw)
  *  có sự tham khảo của gemini và clade
  *  pls be impressed ;-;
+*
+ *  dự án bắt đầu từ ngày 10/6/2026
+ *  ban đầu đc viết bằng python
+ *  nhưng mà nó chạy chậm vl
  *
- *  dự án bắt đầu từ ngày 15/6/2026
- *  lúc đếy em còn chx bt j về llama.cpp
- * -- road map --
- *  parses->tokenize->batch->decode->model (super simple)
- *  2d dành cho parse: debug 2d->4d
- *  2d dành cho model: debug 0.5d (toàn function lm sẵn r)
+ *   stat hackathon|grep Birth 
+ *  -> Birth: 2026-06-10 20:37:01.986511491 +0700
+ *
+ *  lúc đếy e còn chx bt j về llama.cpp
+ *  cảm ơn chị google đã tạo ra google collab và google gemini
+ *  --top tier ascii art --
+ * ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿
+ * ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿
+ * ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡏⢹⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿
+ * ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⠁⠈⢿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿
+ * ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⣤⡀ ♥VN⠀⠀⢀⣤⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿
+ * ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡖⠀⠀⠀⠀⢲⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿
+ * ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⠁⣀⣴⣦⣀⠈⢿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿
+ * ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⣾⣿⣿⣿⣿⣷⣾⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿
+ * ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿
+ * ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿
  */
 #include "include/json.h"
 #include "include/llama.h"
@@ -26,7 +45,7 @@
 #include <cstdint>
 using namespace std;
 #define MODEL "./models/Qwen3.5-4B-Q4_K_M.gguf"
-#define EMBEDDING "./models/Qwen3-Embedding-4B-Q4_K_M.gguf"
+#define EMBEDDING "./models/Qwen3.5-9B-Q4_K_M.gguf" // dangerous 10gb file
 #define PUBLIC "./data/public-data.json"
 #define PRIVATE "./data/private-data.json"
 #define OUTPUT "./output/pred.csv"
