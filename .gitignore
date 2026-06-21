@@ -1,4 +1,5 @@
 models/
+build/
 .venv/
 .git/
 .temp/

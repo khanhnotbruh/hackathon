@@ -1,9 +1,21 @@
 /*
+ * -- random comment --
  * "lý do tại s e ko có log cho parsing hay là read file
  * vì nó chạy quá nhanh :))"-18/6/2026-
  * "pls check line 210"-19/6/2026-
  * "dcm s t ko đặt tên cho cái dictionary là pos ;-;" -20/6/2026-
  * "i hate goto"-21/6/2026-
+ * -- note--
+ *  code này được viết 100% bởi e (i use arch btw)
+ *  có sự tham khảo của gemini và clade
+ *  pls be impressed ;-;
+ *
+ *  dự án bắt đầu từ ngày 15/6/2026
+ *  lúc đếy em còn chx bt j về llama.cpp
+ * -- road map --
+ *  parses->tokenize->batch->decode->model (super simple)
+ *  2d dành cho parse: debug 2d->4d
+ *  2d dành cho model: debug 0.5d (toàn function lm sẵn r)
  */
 #include "include/json.h"
 #include "include/llama.h"
@@ -20,8 +32,8 @@ using namespace std;
 #define OUTPUT "./output/pred.csv"
 
 struct data_s{
-  const char*data;
-  const char***dictionary;
+  char*data;
+  char***dictionary;
   int total_question,total_char;
 };
 struct token_s{
@@ -34,7 +46,7 @@ struct model_s{
   struct llama_context*ctx;
   struct llama_sampler*smpl;
 };
-void cleanUpData(const char**data,const char****dictionary,int*total_question,int*total_char){
+void cleanUpData(char**data,char****dictionary,int*total_question,int*total_char){
   if(data&&*data){free(*data);*data=0;}
   if(dictionary&&*dictionary){
     for(int a=0;a<(*total_question);a++)free((*dictionary)[a]);
@@ -64,17 +76,18 @@ char*readFile(const char*path,size_t*size_out){
   char*buffer=(char*)malloc(i_size+1);
   if(!buffer){
     printf("[error] failed allocating buffer for reading file");
-    goto end;
+    fclose(input);
+    return buffer;
   }
   size_t bsize=fread(buffer,1,i_size,input);
   if(bsize!=i_size){
     free(buffer);
     buffer=0;
     printf("[error] unexpected value difference between bsize (%d) and i_size (%d)",bsize,i_size);
-    goto end;
+    fclose(input);
+    return buffer;
   }
   buffer[bsize]='\0';
-end:
   fclose(input);
   *size_out=i_size;
   return buffer;
@@ -87,32 +100,30 @@ struct data_s parsingDataJson(char*raw[],int raw_size[],int size){
     return data_s{};
   }
   int arr_num=0,out_size=0,total_object=0,total_char=0;
-  char *data=0;
-  const char ***dictionary=0;
   struct json_value_s**raw_root=(struct json_value_s**)alloca(size*sizeof(struct json_value_s*));
   for(int i=0;i<size;i++){
     raw_root[i]=json_parse(raw[i],raw_size[i]);
     if(!raw_root[i]||raw_root[i]->type!=json_type_array){
       printf("[error] failed to parse\n");
-      goto end;
+      return{};
     }
     total_object+=((struct json_array_s*)raw_root[i]->payload)->size;
     total_char+=raw_size[i];
   }
-  data=(char*)malloc(total_char+1);//add only one '\0'
-  dictionary=(const char***)malloc(total_object*sizeof(const char**));
+  char*data=(char*)malloc(total_char+1);//add only one '\0'
+  char***dictionary=(char***)malloc(total_object*sizeof(char**));
   if(!data||!dictionary){
     printf("[error] allocation failed while parsing json file\n");
-    cleanUpData(&data,&dictionary,&total_object,&out_size);
-    goto end;
+    cleanUpData(&data,&dictionary,0,0);
+    return{};
   }
   char*write_ptr=data;
   for(int i=0;i<total_object;i++){
     dictionary[i]=(const char**)malloc(6*sizeof(const char*));//qid,question,a,b,c,d
     if(!dictionary[i]){
       printf("[error] allocation failed while parsing json file\n");
-      cleanUpData(&data,&dictionary,&total_object,&out_size);
-      goto end;
+      cleanUpData(&data,&dictionary,0,0);
+      return{};
     }
     for(int j=0;j<6;j++)dictionary[i][j]=0;
   }
@@ -121,15 +132,15 @@ struct data_s parsingDataJson(char*raw[],int raw_size[],int size){
     while(array_node){
       if(array_node->value->type!=json_type_object){
         printf("[error] unexpected value at object number %d\n",arr_num+1);
-        cleanUpData(&data,&dictionary,&total_object,&out_size);
-        goto end;
+        cleanUpData(&data,&dictionary,0,0);
+        return{};
       }
       struct json_object_element_s*object_node=((struct json_object_s*)array_node->value->payload)->start;
       int obj_num=0;
       while(object_node){
         obj_num++;//1-indexed
         switch (object_node->value->type){
-          case json_type_string:
+          case json_type_string:{
             struct json_string_s*string_node=(struct json_string_s*)object_node->value->payload;
             if(object_node->name->string_size==8&&memcmp(object_node->name->string,"question",8)==0){
               dictionary[arr_num][1]=write_ptr;
@@ -141,11 +152,12 @@ struct data_s parsingDataJson(char*raw[],int raw_size[],int size){
               write_ptr+=string_node->string_size;
             }else{
               printf("[error] unexpected naming at object number %d, pls use \"question\" or \"qid\"\n",obj_num);
-              cleanUpData(&data,&dictionary,&total_object,&out_size);
-              goto end;
+              cleanUpData(&data,&dictionary,0,0);
+              return{};
             }
             break;
-          case json_type_array:
+          }
+          case json_type_array:{
             if(object_node->name->string_size==7&&memcmp(object_node->name->string,"choices",7)==0){
               struct json_array_element_s*choice_node=((struct json_array_s*)object_node->value->payload)->start;
               int ans_num=0;
@@ -159,14 +171,15 @@ struct data_s parsingDataJson(char*raw[],int raw_size[],int size){
               }
             }else{
               printf("[error] unexpected naming at object number %d, pls use \"choices\"\n",obj_num);
-              cleanUpData(&data,&dictionary,&total_object,&out_size);
-              goto end;
+              cleanUpData(&data,&dictionary,0,0);
+              return{};
             }
             break;
+          }
           default:
             printf("[error] unexpected type at object number %d\n",obj_num);
-            cleanUpData(&data,&dictionary,&total_object,&out_size);
-            goto end;
+            cleanUpData(&data,&dictionary,0,0);
+            return{};
         }
         object_node=object_node->next;
       }
@@ -176,9 +189,7 @@ struct data_s parsingDataJson(char*raw[],int raw_size[],int size){
   }
   *write_ptr='\0';
   out_size=write_ptr-data;
-end:
-  for(int j=0;j<size;j++) free(raw_root[j]);
-  return (struct data_s){data,dictionary,total_object,out_size};
+  return {data,dictionary,total_object,out_size};
 }
 
 // i am bored with using goto
@@ -226,7 +237,7 @@ void appendToBatch(struct llama_batch*batch,llama_token*t,int*pos,int size,int s
     for(int j=0;j<bsize;j++)batch->seq_id[c][j]=sseq_id+j;
     batch->logits[c]=false;
   }
-  if(size>0)batch->logits[off+size]=true;
+  if(size>0)batch->logits[off+size-1]=true;
   batch->n_tokens+=size;
 }
 token_s initSharedPromptToken(struct model_s*model){
@@ -240,12 +251,8 @@ token_s initSharedPromptToken(struct model_s*model){
     "\nĐáp án đúng là:<|im_end|>\n<|im_start|>assistant\n"
   };
   int strsize[7]={0};
-  int total_size=0; 
-  for(int i=0;i<7;i++){
-    strsize[i]=strlen(prompt[i]);
-    total_size+=strsize[i];
-  }
-  return tokenizeRange(model->model,prompt,total_size,7,0,6);
+  for(int i=0;i<7;i++)strsize[i]=strlen(prompt[i]);
+  return tokenizeRange(model->model,prompt,strsize,7,0,6);
 };
 void processRangeQuestion(struct data_s*data,struct model_s*model,struct token_s*shared_token,int sqidx,int eqidx,FILE*out){
   if(sqidx>eqidx)return;
@@ -270,7 +277,7 @@ void processRangeQuestion(struct data_s*data,struct model_s*model,struct token_s
     printf("[log] processing %d question",total_question);
     struct llama_batch batch=llama_batch_init(max_token,0,total_question);
     //creating shared prompt
-    batch->n_token=0;
+    batch.n_token=0;
     int pos=0;
     appendToBatch(batch,shared_pos[0],&pos,shared_size,sqidx,eqidx);
     for(int bidx=0;bidx<total_question;bidx++){
@@ -318,25 +325,28 @@ void processRangeQuestion(struct data_s*data,struct model_s*model,struct token_s
       }
       fflush(out);
     }
+    llama_batch_free(batch);
   }else{
     int mid=sqidx+(total_question-1)/2;
     printf("[log] devided into two branch: from %d to %d and %d to %d",sqidx,mid,mid+1,eqidx);
     processRangeQuestion(data,model,shared_token,sqidx,mid,out);
     processRangeQuestion(data,model,shared_token,mid+1,eqidx,out);
   }
-  llama_batch_free(batch);
 }
 
-struct model_s initializeModel(char*model_path){
+struct model_s initializeModel(char*model_path,bool*init){
   struct llama_context*ctx=0;
   struct llama_model*model=0;
   struct llama_sampler*smpl=0;
   printf("[log] initializing llama backend\n");
-  llama_backend_init();
+  if(!(*init)){
+    llama_backend_init();
+    *init=1;
+  }
   printf("[log] completed initializing llama backend\n");
   printf("[log] loading parameters\n");
   llama_model_params model_params=llama_model_default_params();
-  //model_params.n_gpu_layers = 99; //<- use this if you have strong af gpu
+  model_params.n_gpu_layers = 99; //<- use this if you have strong af gpu
   struct llama_context_params context_params=llama_context_default_params();
   context_params.n_batch=4096;
   context_params.n_ctx=4096;
@@ -375,8 +385,10 @@ int main(){
   struct stat tmp={0};
   struct data_s data={0};
   struct model_s pipeline={0};
+  bool backend_initialized=0;
   char*publ=0,*priv=0,**raw=0;
-  int publ_size=0,priv_size=0,raw_size=0,*rsize=0;
+  size_t publ_size=0,priv_size=0;
+  int raw_size=0,*rsize=0;
   if(stat(PUBLIC,&tmp)==0){
     publ=readFile(PUBLIC,&publ_size);
     if(publ)raw_size++;
@@ -391,13 +403,15 @@ int main(){
     printf("[very very extreme fatal error] there is no input file ;-;");
     if(publ)free(publ);
     if(priv)free(priv);
-    goto end;
+    return 1;
   }
   raw=(char**)malloc(raw_size*sizeof(int*));//black magic
   rsize=(int*)alloca(raw_size*sizeof(int));
   int t=0;
   if(!raw||!rsize){
     printf("[log] failed allocating stuff at main()");
+    if(publ)free(publ);
+    if(priv)free(priv);
     return 1;
   }
   if(publ){
@@ -409,16 +423,28 @@ int main(){
     raw[t++]=priv;
   }
   data=parsingDataJson(raw,rsize,raw_size);
-  pipeline=initializeModel(MODEL);
+  pipeline=initializeModel(MODEL,&backend_initialized);
   if (!pipeline.ctx || !pipeline.model) {
     printf("[fatal error] failed initializing neural engine backend structures.\n");
-    goto end;
+    cleanUpData(&data.data,&data.dictionary,&data.total_question,&data.total_char);
+    cleanUpModel(&pipeline.model,&pipeline.ctx,&pipeline.smpl);
+    if(backend_initialized)llama_backend_free();
+    if(raw)free(raw);
+    if(publ)free(publ);
+    if(priv)free(priv);
+    return 1;
   }
   if(data.total_question>0){
     FILE*out=fopen(OUTPUT,"w");
     if(!out){
       printf("[fatal error] failed creating output file: %s\n",OUTPUT);
-      goto end;
+      cleanUpData(&data.data,&data.dictionary,&data.total_question,&data.total_char);
+      cleanUpModel(&pipeline.model,&pipeline.ctx,&pipeline.smpl);
+      if(backend_initialized)llama_backend_free();
+      if(raw)free(raw);
+      if(publ)free(publ);
+      if(priv)free(priv);
+      return 1;
     }
     printf("[log] starting processing answer");
     fprintf(out,"qid,answer\n");
@@ -432,9 +458,9 @@ int main(){
 end:
   cleanUpData(&data.data,&data.dictionary,&data.total_question,&data.total_char);
   cleanUpModel(&pipeline.model,&pipeline.ctx,&pipeline.smpl);
+  if(backend_initialized)llama_backend_free();
   if(raw)free(raw);
   if(publ)free(publ);
   if(priv)free(priv);
-  llama_backend_free();
   return 0;
 }
