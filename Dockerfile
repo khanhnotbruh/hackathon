@@ -12,6 +12,8 @@ RUN pip3 install --break-system-packages huggingface_hub
 WORKDIR /app
 COPY download.py main.cpp CMakeLists.txt ./
 COPY include/ ./include/
+ARG SKIP_MODEL_DOWNLOAD=0
+ENV SKIP_MODEL_DOWNLOAD=$SKIP_MODEL_DOWNLOAD
 RUN python3 download.py
 RUN git clone https://github.com/nlohmann/json.git /tmp/json && \
     cp /tmp/json/single_include/nlohmann/json.hpp ./include/ && \

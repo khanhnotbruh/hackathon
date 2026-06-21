@@ -6,9 +6,12 @@ REPO_ID = "unsloth/Qwen3.5-9B-GGUF"
 FILENAME = "Qwen3.5-9B-Q4_K_M.gguf"
 DEST_DIR = "./models"
 
-print(f"[log] Spinning up download handler for {FILENAME}...")
-print(f"[log] Target repository: https://huggingface.co/{REPO_ID}")
-if not os.path.exists(os.path.join(DEST_DIR,FILENAME)):
+if os.getenv("SKIP_MODEL_DOWNLOAD") == "1":
+    print("[log] SKIP_MODEL_DOWNLOAD flag detected. Skipping download phase entirely.")
+elif os.path.exists(os.path.join(DEST_DIR, FILENAME)):
+    print(f"[log] {FILENAME} already exists locally. Skipping download.")
+else:
+    print(f"[log] Spinning up download handler for {FILENAME}...")
     try:
         os.makedirs(DEST_DIR, exist_ok=True)
         model_local_path = hf_hub_download(
@@ -17,9 +20,7 @@ if not os.path.exists(os.path.join(DEST_DIR,FILENAME)):
             local_dir=DEST_DIR,
             local_dir_use_symlinks=False 
         )
-        print("\n" + "="*50)
-        print("[success] Weights downloaded successfully!")
-        print(f"[success] Target location: {os.path.abspath(model_local_path)}")
-        print("="*50)
+        print(f"\n[success] Weights downloaded to: {os.path.abspath(model_local_path)}")
     except Exception as e:
-        print(f"\n[error] Download failed or was interrupted: {e}")
+        print(f"\n[error] Download failed: {e}")
+        exit(1)

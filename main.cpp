@@ -8,8 +8,9 @@
  * "i hate goto"-21/6/2026-
  * -- road map --
  *  parses->tokenize->batch->decode->model (super simple)
- *  4d dành cho parse: debug 3d->tổng 1 tuần
- *  3d dành cho model: debug 3d->
+ *  mất 3 ngày lang thang ở python và docker
+ *  1d dành cho parse: debug 3d->4 ngày
+ *  3d dành cho model: debug 3d->6 ngày
  * -- note--
  *  code này được viết 100% bởi e (i use arch btw)
  *  có sự tham khảo của gemini và clade
@@ -36,8 +37,8 @@
  * ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿
  * ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿
  */
-#include "include/json.h"
-#include "include/llama.h"
+#include "json.hpp"
+#include "llama.h"
 #include <alloca.h>
 #include <cstdio>
 #include <cstring>
