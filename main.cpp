@@ -99,7 +99,7 @@ char*readFile(const char*path,size_t*size_out){
   rewind(input);
   char*buffer=(char*)malloc(i_size+1);
   if(!buffer){
-    printf("[error] failed allocating buffer for reading file");
+    printf("[error] failed allocating buffer for reading file\n");
     fclose(input);
     return buffer;
   }
@@ -107,7 +107,7 @@ char*readFile(const char*path,size_t*size_out){
   if(bsize!=i_size){
     free(buffer);
     buffer=0;
-    printf("[error] unexpected value difference between bsize (%d) and i_size (%d)",bsize,i_size);
+    printf("[error] unexpected value difference between bsize (%d) and i_size (%ld)\n",bsize,i_size);
     fclose(input);
     return buffer;
   }
@@ -119,20 +119,20 @@ char*readFile(const char*path,size_t*size_out){
 #include <string>//;-; cant avoid using this
 struct data_s parsingDataJson(char*raw[],int raw_size[],int size){
   if(!raw){
-    printf("[error] pass null pointer to parse??");
+    printf("[error] pass null pointer to parse??\n");
     return{};
   }
   int total_size=0;
   for(int i=0;i<size;i++){
     total_size+=raw_size[i];
     if(!raw[i]){
-      printf("[error] passing null pointer as content to parse?");
+      printf("[error] passing null pointer as content to parse?\n");
       return {};
     }
   }
   char*data=(char*)malloc(total_size+1);
   if(!data){
-    printf("[log] failed allocating space while parsing");
+    printf("[log] failed allocating space while parsing\n");
     cleanUpData(&data,0,0,0);
     return {};
   }
@@ -152,14 +152,14 @@ struct data_s parsingDataJson(char*raw[],int raw_size[],int size){
   total_option+=2;
   char***dictionary=(char***)malloc(total_question*sizeof(char**));
   if(!dictionary){
-    printf("[log] failed allocating space while parsing");
+    printf("[error] failed allocating space while parsing\n");
     cleanUpData(&data,&dictionary,0,0);
     return {};
   }
   for(int i=0;i<total_question;i++){
     dictionary[i]=(char**)malloc(total_option*sizeof(char*));
     if(!dictionary[i]){
-      printf("[log] failed allocating space while parsing");
+      printf("[error] failed allocating space while parsing\n");
       cleanUpData(&data,&dictionary,0,0);
       return {};
     }
@@ -195,7 +195,7 @@ struct data_s parsingDataJson(char*raw[],int raw_size[],int size){
 // pls input a valid one : [l,r]<n;
 struct token_s tokenizeRange(llama_model*model,const char*prompt_pos[],int len[],int size,int l,int r){
   if(l>r||r>=size){
-    printf("[log] invalid input for tokenizeRange function");
+    printf("[log] invalid input for tokenizeRange function\n");
     return {};
   }
   int total_size=0;
@@ -215,7 +215,7 @@ struct token_s tokenizeRange(llama_model*model,const char*prompt_pos[],int len[]
     const struct llama_vocab* vocab = llama_model_get_vocab(model);
     int cur_size=llama_tokenize(vocab,prompt_pos[i],len[i],write_ptr,max_token-used_size,false,true);
     if(cur_size<0){
-      printf("[error] failed to tokenize");
+      printf("[error] failed to tokenize\n");
       cleanUpToken(&token,&dictionary,0,0);
       return{};
     }
@@ -243,17 +243,19 @@ void appendToBatch(struct llama_batch*batch,llama_token*t,int*pos,int size,int s
 token_s initSharedPromptToken(struct model_s*model,int total_option){
   int size=total_option+2;
   const char**prompt=(const char**)alloca(size*sizeof(char*));
-  prompt[0]="<|im_start|>system\nBạn là một trợ lý ảo vô cùng chính xác, chuyên xử lý bài thi trắc nghiệm. Nhiệm vụ của bạn là đọc câu hỏi và các lựa chọn được cung cấp, sau đó phân tích để tìm ra đáp án đúng nhất.\nYÊU CẦU BẮT BUỘC: Chỉ được phép trả về duy nhất một chữ cái đại diện cho đáp án đúng (A đến Z). Không giải thích, không thêm khoảng trắng, không lặp lại câu hỏi.<|im_end|>\n<|im_start|>user\n\nCác lựa chọn:\n";
+  prompt[0]="<|im_start|>system\nBạn là một trợ lý ảo vô cùng chính xác, chuyên xử lý bài thi trắc nghiệm. Nhiệm vụ của bạn là đọc câu hỏi và các lựa chọn được cung cấp, sau đó phân tích để tìm ra đáp án đúng nhất.\nYÊU CẦU BẮT BUỘC: Chỉ được phép trả về duy nhất một chữ cái đại diện cho đáp án đúng (A đến Z). Không giải thích, không thêm khoảng trắng, không lặp lại câu hỏi.<|im_end|>\n<|im_start|>user\n";
+  prompt[1]="Các lựa chọn:\nA: ";
   prompt[size-1]="\nĐáp án đúng là:<|im_end|>\n<|im_start|>assistant\n";
   int *strsize=(int*)alloca(size*sizeof(int));
   strsize[0]=strlen(prompt[0]);
+  strsize[1]=strlen(prompt[1]);
   strsize[size-1]=strlen(prompt[size-1]);
   // ai generated table ;-;
   const char* options[26] = {
     "\nA: ", "\nB: ", "\nC: ", "\nD: ", "\nE: ", "\nF: ", "\nG: ", "\nH: ", "\nI: ", "\nJ: ", "\nK: ", "\nL: ", "\nM: ",
     "\nN: ", "\nO: ", "\nP: ", "\nQ: ", "\nR: ", "\nS: ", "\nT: ", "\nU: ", "\nV: ", "\nW: ", "\nX: ", "\nY: ", "\nZ: "
   };
-  for(int i=1;i+1<size;i++){
+  for(int i=2;i+1<size;i++){
     prompt[i]=options[i-1];
     strsize[i]=4;
   }
