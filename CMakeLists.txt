@@ -13,7 +13,6 @@ FetchContent_Declare(
     GIT_TAG        master 
 )
 
-# set(GGML_CUDA ON CACHE BOOL "Build with CUDA" FORCE)
 FetchContent_MakeAvailable(llama_cpp)
 add_executable(engine simdjson/simdjson.cpp main.cpp)
 target_link_libraries(engine PRIVATE llama)

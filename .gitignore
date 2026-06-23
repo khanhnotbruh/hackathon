@@ -6,4 +6,5 @@ build/
 data/
 output/
 __pycache__/
+test*
 *.pyc

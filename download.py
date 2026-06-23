@@ -5,12 +5,29 @@ from huggingface_hub import hf_hub_download
 REPO_ID = "unsloth/Qwen3.5-9B-GGUF" 
 FILENAME = "Qwen3.5-9B-Q8_0.gguf"
 DEST_DIR = "./models"
+INP_PATH=os.getenv("MODEL_PATH");
+MODEL_PATH=os.path.join(DEST_DIR,FILENAME)
+if os.path.exists(INP_PATH):
+    if os.path.isfile(INP_PATH):
+        print(f"[log] use model at {INP_PATH}")
+    elif os.path.isdir(path):
+        inp_path=os.path.join(INP_PATH,FILENAME)
+        if os.path.exists(inp_path):
+            print(f"[log] use model at {INP_PATH}")
+        else:
+        DEST_DIR=INP_PATH;
+        print("[log] use {INP_PATH} as root directory for model")
+else:
+    print(f"[log] use model at {MODEL_PATH}")
+
+
 if os.getenv("SKIP_MODEL_DOWNLOAD") == "1":
     print("[log] SKIP_MODEL_DOWNLOAD flag detected. Skipping download phase entirely.")
-elif os.path.exists(os.path.join(DEST_DIR, FILENAME)):
-    print(f"[log] {FILENAME} already exists locally. Skipping download.")
+elif os.path.exists(MODEL_PATH):
+    print(f"[log] {MODEL_PATH} already exists locally. Skipping download.")
 else:
-    print(f"[log] Spinning up download handler for {FILENAME}...")
+print(f"[log] can not find specific model at {}")
+    print(f"[log] Spinning up download handler for {MODEL_PATH}...")
     try:
         os.makedirs(DEST_DIR, exist_ok=True)
         model_local_path = hf_hub_download(

@@ -319,30 +319,74 @@ void processRangeQuestion(struct data_s*data,struct model_s*model,struct token_s
     *seq_pos+=total_question;
     // decode
     int res=llama_decode(model->ctx,batch);
-    if(!res){
-      for(int bidx=0;bidx<total_question;bidx++){
-        int qidx=sqidx+bidx;
-        llama_token prediction=llama_sampler_sample(model->smpl,model->ctx,logit_idx[bidx]);
-        char out_buf[64];
-        const struct llama_vocab* vocab = llama_model_get_vocab(model->model);
-        int res_len=llama_token_to_piece(vocab,prediction,out_buf,sizeof(out_buf),0,false);
-        char ans='C';
-        for (int i = 0; i < res_len; i++) {
-          if (out_buf[i]>='A'&&out_buf[i]<='Z'){ans=out_buf[i];break;}
-          if (out_buf[i]>='a'&&out_buf[i]<='z'){ans=out_buf[i]&~32;break;}
-        }
-        int qid_size=data->dictionary[qidx][1]-data->dictionary[qidx][0];
-        fprintf(out,"%.*s,%c\n",qid_size,data->dictionary[qidx][0],ans);
-      }
-      fflush(out);
-    }else{
-      printf("[error] decode execution failed for range %d to %d. defaulting to 'C'\n", sqidx, eqidx);
-      for(int i=sqidx;i<=eqidx;i++) {
-        int qid_size=data->dictionary[i][1]-data->dictionary[i][0];
-        fprintf(out,"%.*s,C\n",qid_size,data->dictionary[i][0]);
-      }
-      fflush(out);
+    const struct llama_vocab* vocab = llama_model_get_vocab(model->model);
+    
+    bool* finished = (bool*)alloca(total_question * sizeof(bool));
+    bool* inside_think = (bool*)alloca(total_question * sizeof(bool));
+    int* token_pos = (int*)alloca(total_question * sizeof(int));
+    llama_token* last_tokens = (llama_token*)alloca(total_question * sizeof(llama_token));
+
+    for (int bidx = 0; bidx < total_question; bidx++) {
+      finished[bidx] = false;
+      inside_think[bidx] = false;
+      last_tokens[bidx] = llama_sampler_sample(model->smpl, model->ctx, logit_idx[bidx]);
+      token_pos[bidx] = batch.pos[logit_idx[bidx]] + 1; 
     }
+    int max_gen_steps = 64;
+    int remaining_questions = total_question;
+    for (int step = 0; step < max_gen_steps && remaining_questions > 0; step++) {
+      for (int bidx = 0; bidx < total_question; bidx++) {
+        if (finished[bidx]) continue;
+        int qidx = sqidx + bidx;
+        llama_token prediction = last_tokens[bidx];
+        char out_buf[64];
+        int res_len = llama_token_to_piece(vocab, prediction, out_buf, sizeof(out_buf), 0, false);
+        std::string token_str(res_len > 0 ? std::string(out_buf, res_len) : "");
+        if (token_str.find("<think>") != std::string::npos) {
+          inside_think[bidx] = true;
+        }
+        if (token_str.find("</think>") != std::string::npos) {
+          inside_think[bidx] = false;
+          continue;
+        }
+        if (llama_vocab_is_eog(vocab, prediction)) {
+          finished[bidx] = true;
+          remaining_questions--;
+          continue;
+        }
+        if (!inside_think[bidx] && res_len > 0) {
+          size_t first_valid = token_str.find_first_not_of(" \n\r\t:");
+          if (first_valid != std::string::npos) {
+            char ans = token_str[first_valid];
+            int qid_size = data->dictionary[qidx][1] - data->dictionary[qidx][0];
+            fprintf(out, "%.*s,%c\n", qid_size, data->dictionary[qidx][0], ans);
+            finished[bidx] = true;
+            remaining_questions--;
+            continue;
+          }
+        }
+      }
+      if (remaining_questions <= 0) break;
+      batch.n_tokens = 0; 
+
+      for (int bidx = 0; bidx < total_question; bidx++) {
+        if (finished[bidx]) continue;
+        int sseq_id = sqidx + bidx; 
+        appendToBatch(&batch, &last_tokens[bidx], &token_pos[bidx], 1, sseq_id, sseq_id);
+      }
+      if (batch.n_tokens > 0) {
+        int decode_res = llama_decode(model->ctx, batch);
+        if (decode_res != 0) {
+          std::cerr << "Parallel decode step failed with code: " << decode_res << std::endl;
+          break;
+        }
+        for (int bidx = 0; bidx < total_question; bidx++) {
+          if (finished[bidx]) continue;
+          last_tokens[bidx] = llama_sampler_sample(model->smpl, model->ctx, bidx);
+        }
+      }
+    }
+    fflush(out);
     llama_batch_free(batch);
   }else{
     int mid=sqidx+(total_question-1)/2;
@@ -388,7 +432,7 @@ struct model_s initializeModel(const char*model_path,bool*init){
   }
   printf("[log] completed loading context for model\n");
   printf("[log] loading sampler\n");
-  smpl = llama_sampler_chain_init(llama_sampler_chain_default_params());
+  smpl=llama_sampler_chain_init(llama_sampler_chain_default_params());
   llama_sampler_chain_add(smpl, llama_sampler_init_greedy());
   return (struct model_s){model,ctx,smpl};
 }
