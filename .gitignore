@@ -1,9 +1,0 @@
-models/
-build/
-.venv/
-.git/
-.temp/
-data/
-output/
-__pycache__/
-*.pyc
