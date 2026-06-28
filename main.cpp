@@ -408,7 +408,7 @@ struct model_s initializeModel(const char*model_path,bool*init){
   printf("[log] completed initializing llama backend\n");
   printf("[log] loading parameters\n");
   llama_model_params model_params=llama_model_default_params();
-  model_params.n_gpu_layers = 99; //<- use this if you have strong af gpu
+  model_params.n_gpu_layers=4; //<- use this if you have strong af gpu
   struct llama_context_params context_params=llama_context_default_params();
   context_params.n_batch=32768;
   context_params.n_ctx=32768;

@@ -4,5 +4,3 @@ output/
 .gitignore
 .output/
 .temp/
-model/
-

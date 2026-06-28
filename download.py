@@ -2,8 +2,8 @@
 import os
 from huggingface_hub import hf_hub_download
 
-REPO_ID = "unsloth/Qwen3.5-9B-GGUF" 
-FILENAME = "Qwen3.5-9B-Q8_0.gguf"
+REPO_ID = "unsloth/Qwen3.5-0.8B-GGUF" 
+FILENAME = "Qwen3.5-0.8B-Q8_0.gguf"
 DEST_DIR = "./models"
 INP_PATH=os.getenv("MODEL_PATH");
 MODEL_PATH=os.path.join(DEST_DIR,FILENAME)
